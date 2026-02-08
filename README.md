@@ -51,10 +51,16 @@ python run.py view -d <数据根目录> -s <数据集>
 示例：
 ```bash
 # 查看训练集
-python run.py view -i data/images/train -l data/labels/train
+python run.py view -s train
 
 # 查看验证集
-python run.py view -i data/images/val -l data/labels/val
+python run.py view -s val
+
+# 查看测试集
+python run.py view -s test
+
+# 查看增强后的数据
+python run.py view -d ./data/augmented -s train
 ```
 
 键盘操作：
