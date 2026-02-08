@@ -1,0 +1,45 @@
+# YOLO数据增强配置文件
+
+# 输入根目录
+input_images_root: "./data/images"
+input_labels_root: "./data/labels"
+
+# 输出根目录
+output_images_root: "./data/augmented/images"
+output_labels_root: "./data/augmented/labels"
+
+# 要增强的数据集（train/val/test）
+datasets:
+  - train
+  - val
+
+# 每张图像生成的增强数量
+num_augments: 3
+
+# 变换配置
+transforms:
+  # 旋转变换
+  rotate:
+    enabled: true
+    angle_range: [-30, 30]  # 旋转角度范围
+    p: 0.5  # 应用概率
+
+  # 随机遮挡
+  mask:
+    enabled: true
+    num_masks: [1, 5]  # 遮挡块数量范围
+    size_range: [0.02, 0.1]  # 遮挡块大小比例
+    p: 0.5
+
+  # 透视畸变
+  distort:
+    enabled: true
+    range: 0.1  # 畸变强度
+    p: 0.5
+
+  # 高斯噪声
+  gaussian_noise:
+    enabled: true
+    mean: 0  # 噪声均值
+    std_range: [10, 50]  # 噪声标准差范围
+    p: 0.5

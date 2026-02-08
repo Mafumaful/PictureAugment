@@ -1,0 +1,199 @@
+"""图像增强变换模块"""
+
+import cv2
+import numpy as np
+from typing import List, Tuple, Optional
+from .annotation import BBox
+
+
+class BaseTransform:
+    """变换基类"""
+    def __init__(self, p: float = 0.5):
+        self.p = p
+
+    def should_apply(self) -> bool:
+        return np.random.random() < self.p
+
+    def __call__(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        if self.should_apply():
+            return self.apply(image, bboxes)
+        return image, bboxes
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        raise NotImplementedError
+
+
+class Rotate(BaseTransform):
+    """旋转变换"""
+    def __init__(self, angle_range: Tuple[float, float] = (-30, 30), p: float = 0.5):
+        super().__init__(p)
+        self.angle_range = angle_range
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        h, w = image.shape[:2]
+        angle = np.random.uniform(*self.angle_range)
+        center = (w / 2, h / 2)
+        M = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+        cos_val = np.abs(M[0, 0])
+        sin_val = np.abs(M[0, 1])
+        new_w = int(h * sin_val + w * cos_val)
+        new_h = int(h * cos_val + w * sin_val)
+
+        M[0, 2] += (new_w - w) / 2
+        M[1, 2] += (new_h - h) / 2
+
+        rotated = cv2.warpAffine(image, M, (new_w, new_h), borderValue=(114, 114, 114))
+        new_bboxes = self._rotate_bboxes(bboxes, M, w, h, new_w, new_h)
+        return rotated, new_bboxes
+
+    def _rotate_bboxes(self, bboxes: List[BBox], M: np.ndarray,
+                       old_w: int, old_h: int, new_w: int, new_h: int) -> List[BBox]:
+        new_bboxes = []
+        for bbox in bboxes:
+            x1, y1, x2, y2 = bbox.to_corners(old_w, old_h)
+            corners = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+            ones = np.ones((4, 1))
+            corners_h = np.hstack([corners, ones])
+            rotated_corners = (M @ corners_h.T).T
+
+            rx1 = max(0, rotated_corners[:, 0].min())
+            ry1 = max(0, rotated_corners[:, 1].min())
+            rx2 = min(new_w, rotated_corners[:, 0].max())
+            ry2 = min(new_h, rotated_corners[:, 1].max())
+
+            if rx2 > rx1 and ry2 > ry1:
+                new_bbox = BBox.from_corners(bbox.class_id, int(rx1), int(ry1),
+                                             int(rx2), int(ry2), new_w, new_h)
+                new_bboxes.append(new_bbox)
+        return new_bboxes
+
+
+class RandomMask(BaseTransform):
+    """随机遮挡变换"""
+    def __init__(self, num_masks: Tuple[int, int] = (1, 5),
+                 mask_size_range: Tuple[float, float] = (0.02, 0.1),
+                 p: float = 0.5):
+        super().__init__(p)
+        self.num_masks = num_masks
+        self.mask_size_range = mask_size_range
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        h, w = image.shape[:2]
+        result = image.copy()
+        num = np.random.randint(*self.num_masks)
+
+        for _ in range(num):
+            mw = int(w * np.random.uniform(*self.mask_size_range))
+            mh = int(h * np.random.uniform(*self.mask_size_range))
+            x = np.random.randint(0, max(1, w - mw))
+            y = np.random.randint(0, max(1, h - mh))
+            color = tuple(np.random.randint(0, 256, 3).tolist())
+            cv2.rectangle(result, (x, y), (x + mw, y + mh), color, -1)
+
+        return result, bboxes
+
+
+class Distort(BaseTransform):
+    """透视畸变变换"""
+    def __init__(self, distort_range: float = 0.1, p: float = 0.5):
+        super().__init__(p)
+        self.distort_range = distort_range
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        h, w = image.shape[:2]
+        d = self.distort_range
+
+        src = np.array([[0, 0], [w, 0], [w, h], [0, h]], dtype=np.float32)
+        dst = np.array([
+            [np.random.uniform(0, w * d), np.random.uniform(0, h * d)],
+            [w - np.random.uniform(0, w * d), np.random.uniform(0, h * d)],
+            [w - np.random.uniform(0, w * d), h - np.random.uniform(0, h * d)],
+            [np.random.uniform(0, w * d), h - np.random.uniform(0, h * d)]
+        ], dtype=np.float32)
+
+        M = cv2.getPerspectiveTransform(src, dst)
+        warped = cv2.warpPerspective(image, M, (w, h), borderValue=(114, 114, 114))
+        new_bboxes = self._transform_bboxes(bboxes, M, w, h)
+        return warped, new_bboxes
+
+    def _transform_bboxes(self, bboxes: List[BBox], M: np.ndarray,
+                          w: int, h: int) -> List[BBox]:
+        new_bboxes = []
+        for bbox in bboxes:
+            x1, y1, x2, y2 = bbox.to_corners(w, h)
+            corners = np.array([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], dtype=np.float32)
+            corners = corners.reshape(-1, 1, 2)
+            transformed = cv2.perspectiveTransform(corners, M).reshape(-1, 2)
+
+            tx1 = max(0, int(transformed[:, 0].min()))
+            ty1 = max(0, int(transformed[:, 1].min()))
+            tx2 = min(w, int(transformed[:, 0].max()))
+            ty2 = min(h, int(transformed[:, 1].max()))
+
+            if tx2 > tx1 and ty2 > ty1:
+                new_bbox = BBox.from_corners(bbox.class_id, tx1, ty1, tx2, ty2, w, h)
+                new_bboxes.append(new_bbox)
+        return new_bboxes
+
+
+class GaussianNoise(BaseTransform):
+    """高斯噪声变换"""
+    def __init__(self, mean: float = 0, std_range: Tuple[float, float] = (10, 50), p: float = 0.5):
+        super().__init__(p)
+        self.mean = mean
+        self.std_range = std_range
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        std = np.random.uniform(*self.std_range)
+        noise = np.random.normal(self.mean, std, image.shape).astype(np.float32)
+        noisy = np.clip(image.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+        return noisy, bboxes
+
+
+class Compose:
+    """组合多个变换"""
+    def __init__(self, transforms: List[BaseTransform]):
+        self.transforms = transforms
+
+    def __call__(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        for t in self.transforms:
+            image, bboxes = t(image, bboxes)
+        return image, bboxes
+
+
+def build_transforms(config: dict) -> Compose:
+    """从配置构建变换"""
+    transforms = []
+
+    if config.get('rotate', {}).get('enabled', False):
+        cfg = config['rotate']
+        transforms.append(Rotate(
+            angle_range=tuple(cfg.get('angle_range', [-30, 30])),
+            p=cfg.get('p', 0.5)
+        ))
+
+    if config.get('mask', {}).get('enabled', False):
+        cfg = config['mask']
+        transforms.append(RandomMask(
+            num_masks=tuple(cfg.get('num_masks', [1, 5])),
+            mask_size_range=tuple(cfg.get('size_range', [0.02, 0.1])),
+            p=cfg.get('p', 0.5)
+        ))
+
+    if config.get('distort', {}).get('enabled', False):
+        cfg = config['distort']
+        transforms.append(Distort(
+            distort_range=cfg.get('range', 0.1),
+            p=cfg.get('p', 0.5)
+        ))
+
+    if config.get('gaussian_noise', {}).get('enabled', False):
+        cfg = config['gaussian_noise']
+        transforms.append(GaussianNoise(
+            mean=cfg.get('mean', 0),
+            std_range=tuple(cfg.get('std_range', [10, 50])),
+            p=cfg.get('p', 0.5)
+        ))
+
+    return Compose(transforms)
