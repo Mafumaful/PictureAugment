@@ -43,3 +43,22 @@ transforms:
     mean: 0  # 噪声均值
     std_range: [10, 50]  # 噪声标准差范围
     p: 0.5
+
+  # HSV色调变换
+  hsv_adjust:
+    enabled: true
+    hue_range: [-0.1, 0.1]  # 色调偏移范围（-0.1到0.1表示±18度）
+    saturation_range: [0.7, 1.3]  # 饱和度缩放范围
+    value_range: [0.7, 1.3]  # 明度缩放范围
+    p: 0.5
+
+  # 灰度化（黑白）
+  grayscale:
+    enabled: true
+    p: 0.5
+
+  # 强光（亮度增强）
+  brightness_boost:
+    enabled: true
+    brightness_range: [1.2, 1.8]  # 亮度增强倍数范围
+    p: 0.5

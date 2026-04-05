@@ -151,6 +151,61 @@ class GaussianNoise(BaseTransform):
         return noisy, bboxes
 
 
+class HSVAdjust(BaseTransform):
+    """HSV色调变换"""
+    def __init__(self,
+                 hue_range: Tuple[float, float] = (-0.1, 0.1),
+                 saturation_range: Tuple[float, float] = (0.7, 1.3),
+                 value_range: Tuple[float, float] = (0.7, 1.3),
+                 p: float = 0.5):
+        super().__init__(p)
+        self.hue_range = hue_range
+        self.saturation_range = saturation_range
+        self.value_range = value_range
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV).astype(np.float32)
+
+        # 调整色调 (H通道范围是0-179)
+        hue_shift = np.random.uniform(*self.hue_range)
+        hsv[:, :, 0] = (hsv[:, :, 0] + hue_shift * 179) % 180
+
+        # 调整饱和度
+        sat_scale = np.random.uniform(*self.saturation_range)
+        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * sat_scale, 0, 255)
+
+        # 调整明度
+        val_scale = np.random.uniform(*self.value_range)
+        hsv[:, :, 2] = np.clip(hsv[:, :, 2] * val_scale, 0, 255)
+
+        result = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+        return result, bboxes
+
+
+class Grayscale(BaseTransform):
+    """灰度化（黑白）变换"""
+    def __init__(self, p: float = 0.5):
+        super().__init__(p)
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        # 转回3通道保持格式一致
+        result = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+        return result, bboxes
+
+
+class BrightnessBoost(BaseTransform):
+    """强光（亮度增强）变换"""
+    def __init__(self, brightness_range: Tuple[float, float] = (1.2, 1.8), p: float = 0.5):
+        super().__init__(p)
+        self.brightness_range = brightness_range
+
+    def apply(self, image: np.ndarray, bboxes: List[BBox]) -> Tuple[np.ndarray, List[BBox]]:
+        brightness_factor = np.random.uniform(*self.brightness_range)
+        result = np.clip(image.astype(np.float32) * brightness_factor, 0, 255).astype(np.uint8)
+        return result, bboxes
+
+
 class Compose:
     """组合多个变换"""
     def __init__(self, transforms: List[BaseTransform]):
@@ -193,6 +248,28 @@ def build_transforms(config: dict) -> Compose:
         transforms.append(GaussianNoise(
             mean=cfg.get('mean', 0),
             std_range=tuple(cfg.get('std_range', [10, 50])),
+            p=cfg.get('p', 0.5)
+        ))
+
+    if config.get('hsv_adjust', {}).get('enabled', False):
+        cfg = config['hsv_adjust']
+        transforms.append(HSVAdjust(
+            hue_range=tuple(cfg.get('hue_range', [-0.1, 0.1])),
+            saturation_range=tuple(cfg.get('saturation_range', [0.7, 1.3])),
+            value_range=tuple(cfg.get('value_range', [0.7, 1.3])),
+            p=cfg.get('p', 0.5)
+        ))
+
+    if config.get('grayscale', {}).get('enabled', False):
+        cfg = config['grayscale']
+        transforms.append(Grayscale(
+            p=cfg.get('p', 0.5)
+        ))
+
+    if config.get('brightness_boost', {}).get('enabled', False):
+        cfg = config['brightness_boost']
+        transforms.append(BrightnessBoost(
+            brightness_range=tuple(cfg.get('brightness_range', [1.2, 1.8])),
             p=cfg.get('p', 0.5)
         ))
 
