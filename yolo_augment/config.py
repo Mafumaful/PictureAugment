@@ -21,7 +21,8 @@ def validate_config(config: Dict[str, Any]) -> None:
             raise ValueError(f"配置缺少必需字段: {key}")
 
     transforms = config.get('transforms', {})
-    valid_transforms = ['rotate', 'mask', 'distort', 'gaussian_noise']
+    valid_transforms = ['rotate', 'mask', 'distort', 'gaussian_noise',
+                        'hsv_adjust', 'grayscale', 'brightness_boost']
     for name in transforms:
         if name not in valid_transforms:
             raise ValueError(f"未知变换类型: {name}")
